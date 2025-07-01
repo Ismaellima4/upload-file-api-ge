@@ -10,5 +10,6 @@ minio = "0.3.0"
 tokio = { version = "1.45.1", features = ["full"] }
 tower-http = { version = "0.6.6", features = ["limit", "trace"] }
 tracing = "0.1.41"
-tracing-subscriber = "0.3.19"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+uuid = { version = "1.17.0", features = ["serde", "v4"] }
 
