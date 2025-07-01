@@ -6,7 +6,7 @@ use minio::s3::{
 };
 
 #[allow(dead_code)]
-pub fn init_minio_client() -> Result<Client, Box<dyn Error>> {
+pub fn init_minio_client() -> Result<Client, Box<dyn Error + Send + Sync>> {
     dotenv::dotenv().ok();
 
     let endpoint = env::var("MINIO_ENDPOINT")?.parse::<BaseUrl>()?;
@@ -35,4 +35,3 @@ pub async fn create_bucket_if_not_exists(
     };
     Ok(())
 }
-
