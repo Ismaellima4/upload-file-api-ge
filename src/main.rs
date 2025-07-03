@@ -4,13 +4,13 @@ mod util;
 use std::sync::Arc;
 
 use axum::{
-    Json, Router,
+    Router,
     extract::{DefaultBodyLimit, Multipart, Path, State},
     http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
 };
-use minio::s3::{Client, segmented_bytes::SegmentedBytes, types::S3Api};
+use minio::s3::{Client, types::S3Api};
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use util::*;
@@ -21,44 +21,39 @@ struct AppState {
     client: Arc<Client>,
 }
 
-async fn upload_image(State(app_state): State<AppState>, mut file: Multipart) -> impl IntoResponse {
+async fn upload_image(State(app_state): State<AppState>, mut res: Multipart) -> impl IntoResponse {
     let client = &app_state.client;
-    while let Some(field) = file.next_field().await.unwrap() {
-        let name = field.file_name().unwrap().to_string();
-        let ext = std::path::Path::new(&name)
-            .extension()
-            .unwrap()
-            .to_str()
-            .unwrap_or("");
+    let mut file = File::new();
+    while let Some(field) = res.next_field().await.unwrap() {
+        let field_name = field.name().unwrap_or("");
+        match field_name {
+            "product_id" => file.file_name(field.text().await.unwrap()),
+            "file" => {
+                let name = field.file_name().clone().unwrap();
+                let ext = std::path::Path::new(&name)
+                    .extension()
+                    .unwrap()
+                    .to_str()
+                    .unwrap_or("");
 
-        if is_image_ext(ext) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json("Apenas arquivos de imagem são aceitos (jpg, png, jpeg)".to_string()),
-            );
+                file.ext(ext.to_string());
+                file.bytes(field.bytes().await.unwrap());
+            }
+            _ => {}
         }
-        let data = field.bytes().await.unwrap();
-        let mut segmented_bytes = SegmentedBytes::new();
-        segmented_bytes.append(data);
-
-        let file_name = generated_unique_file_name(ext);
+    }
+    if !file.file_name.is_empty() {
         return match client
-            .put_object(BUCKET_NAME, file_name.clone(), segmented_bytes)
+            .put_object(BUCKET_NAME, file.file_name, file.bytes)
             .send()
             .await
         {
-            Ok(_) => (StatusCode::CREATED, Json(file_name)),
-            Err(err) => (
-                StatusCode::BAD_REQUEST,
-                Json(format!("Erro ao fazer o upload da imagem {err}")),
-            ),
+            Ok(_) => StatusCode::CREATED,
+            Err(_err) => StatusCode::BAD_REQUEST,
         };
     }
 
-    (
-        StatusCode::BAD_REQUEST,
-        Json("Nenhum arquivo foi enviado".to_string()),
-    )
+    StatusCode::BAD_REQUEST
 }
 
 async fn find_image(
