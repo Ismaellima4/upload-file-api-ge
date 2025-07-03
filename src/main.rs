@@ -4,13 +4,14 @@ mod util;
 use std::sync::Arc;
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{DefaultBodyLimit, Multipart, Path, State},
     http::{StatusCode, header},
     response::IntoResponse,
     routing::{get, post},
 };
 use minio::s3::{Client, types::S3Api};
+use serde_json::json;
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use util::*;
@@ -21,45 +22,70 @@ struct AppState {
     client: Arc<Client>,
 }
 
-async fn upload_image(State(app_state): State<AppState>, mut res: Multipart) -> impl IntoResponse {
+async fn upload_image(
+    State(app_state): State<AppState>,
+    mut res: Multipart,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     let client = &app_state.client;
     let mut file = File::new();
     while let Some(field) = res.next_field().await.unwrap() {
         let field_name = field.name().unwrap_or("");
         match field_name {
-            "product_id" => file.file_name(field.text().await.unwrap()),
-            "file" => {
-                let name = field.file_name().clone().unwrap();
-                let ext = std::path::Path::new(&name)
-                    .extension()
-                    .unwrap()
-                    .to_str()
-                    .unwrap_or("");
+            "product_id" => {
+                let unique_file_name_with_product_id_and_ext = field.text().await.unwrap();
+                let parts: Vec<&str> = unique_file_name_with_product_id_and_ext
+                    .split(".")
+                    .collect();
+                let ext = parts.last().unwrap_or(&"");
+                let file_name = parts[0];
 
-                file.ext(ext.to_string());
-                file.bytes(field.bytes().await.unwrap());
+                file.file_name(file_name.to_string());
+                file.ext(format!(".{ext}"));
+            }
+            "file" => {
+                match field.bytes().await {
+                    Ok(bytes) => file.bytes(bytes),
+                    Err(err) => {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({ "message": err.to_string() })),
+                        ));
+                    }
+                };
             }
             _ => {}
         }
     }
-    if !file.file_name.is_empty() {
+    if !file.file_name.is_empty() && !file.ext.is_empty() {
+        let file_name_with_ext = file.file_name.clone() + &file.ext;
         return match client
-            .put_object(BUCKET_NAME, file.file_name, file.bytes)
+            .put_object(BUCKET_NAME, file_name_with_ext.clone(), file.bytes)
             .send()
             .await
         {
-            Ok(_) => StatusCode::CREATED,
-            Err(_err) => StatusCode::BAD_REQUEST,
+            Ok(_) => Ok((
+                StatusCode::CREATED,
+                Json(json!({ "message": file_name_with_ext })),
+            )),
+            Err(err) => Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "message": err.to_string() })),
+            )),
         };
     }
 
-    StatusCode::BAD_REQUEST
+    Err((
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "message": "É necessario o id do product + o ext da imagem. (ce8fa930-fe2d-4ad1-9966-8eb3c3826444.jpeg)".to_string()
+        })),
+    ))
 }
 
 async fn find_image(
     Path(name): Path<String>,
     State(app_state): State<AppState>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let client = &app_state.client;
 
     match client.get_object(BUCKET_NAME, &name).send().await {
@@ -84,7 +110,7 @@ async fn find_image(
         }
         Err(err) => Err((
             StatusCode::NOT_FOUND,
-            format!("Imagem não encontrada: {}", err),
+            Json(json!({ "message": err.to_string() })),
         )),
     }
 }
