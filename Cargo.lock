@@ -9,6 +9,7 @@ dependencies = [
  "axum",
  "dotenv",
  "minio",
+ "serde_json",
  "tokio",
  "tower-http",
  "tracing",
