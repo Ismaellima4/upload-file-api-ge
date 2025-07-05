@@ -28,13 +28,33 @@ async fn upload_image(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     let client = &app_state.client;
     let mut file = File::new();
-    while let Some(field) = res.next_field().await.unwrap() {
+
+    while let Some(field_result) = res.next_field().await.transpose() {
+        let field = match field_result {
+            Ok(f) => f,
+            Err(err) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "message": format!("Erro no multipart: {}", err) })),
+                ));
+            }
+        };
+
         let field_name = field.name().unwrap_or("");
         match field_name {
             "product_id" => {
-                let unique_file_name_with_product_id_and_ext = field.text().await.unwrap();
+                let unique_file_name_with_product_id_and_ext = match field.text().await {
+                    Ok(text) => text,
+                    Err(err) => {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({ "message": err.to_string() })),
+                        ));
+                    }
+                };
+
                 let parts: Vec<&str> = unique_file_name_with_product_id_and_ext
-                    .split(".")
+                    .split('.')
                     .collect();
                 let ext = parts.last().unwrap_or(&"");
                 let file_name = parts[0];
@@ -56,6 +76,7 @@ async fn upload_image(
             _ => {}
         }
     }
+
     if !file.file_name.is_empty() && !file.ext.is_empty() {
         let file_name_with_ext = file.file_name.clone() + &file.ext;
         return match client
@@ -77,7 +98,7 @@ async fn upload_image(
     Err((
         StatusCode::BAD_REQUEST,
         Json(json!({
-            "message": "É necessario o id do product + o ext da imagem. (ce8fa930-fe2d-4ad1-9966-8eb3c3826444.jpeg)".to_string()
+            "message": "É necessario o id do product + o ext da imagem. (ex: ce8fa930-fe2d-4ad1-9966-8eb3c3826444.jpeg)"
         })),
     ))
 }
@@ -140,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_state(state)
         .layer(DefaultBodyLimit::max(1024 * 1024 * 10));
 
-    let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
+    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     tracing::debug!("listening on {} ", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 

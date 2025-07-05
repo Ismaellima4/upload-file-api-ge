@@ -2,11 +2,24 @@ services:
   minio:
     image: minio/minio:latest
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9000:9000"   # API MinIO
+      - "9001:9001"   # Console web MinIO
     environment:
-      MINIO_ACCESS_KEY: user
-      MINIO_SECRET_KEY: secret123
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     volumes:
-      - ./data:/data
+      - ./data:/data   # Persistência local de dados MinIO
     command: server /data --console-address ":9001"
+
+  rust-api:
+    image: ge-upload-file:latest
+    depends_on:
+      - minio
+    ports:
+      - "3000:3000"   # Porta da API Rust
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_SECURE: ${MINIO_SECURE}
+
